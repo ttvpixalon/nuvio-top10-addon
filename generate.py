@@ -360,6 +360,10 @@ def main() -> int:
 
     used = sorted(set(used_m) | set(used_s))
     source_note = "consensus of " + " + ".join(used) if len(used) > 1 else (used[0] if used else "none")
+    credits = " · ".join(c for c, on in (("Data from Trakt (trakt.tv)", any("Trakt" in u for u in used)),
+                                         ("This product uses the TMDB API but is not endorsed or certified by TMDB",
+                                          any("TMDB" in u for u in used)),
+                                         ("Cinemeta by Stremio", any("Stremio" in u for u in used))) if on)
     render_logo().save(DIST / "logo.png", "PNG")
     now = dt.datetime.now(dt.timezone.utc)
     manifest = {
@@ -367,7 +371,7 @@ def main() -> int:
         "version": f"1.{now.strftime('%Y%m%d')}.{now.strftime('%H%M')}",
         "name": "Top 10 Today",
         "description": f"The {TOP_N} most-watched movies and series in the world right now, with ranked artwork. "
-                       f"Ranking: {source_note}. Rebuilt automatically.",
+                       f"Ranking: {source_note}. Rebuilt automatically. {credits}.",
         "logo": f"{SITE_URL}/logo.png",
         "resources": ["catalog"],
         "types": ["movie", "series"],
@@ -387,7 +391,8 @@ def main() -> int:
         f"<p><code style='font-size:1.1rem'>{SITE_URL}/manifest.json</code></p>"
         f"<p>Ranking: {source_note} · built {now.strftime('%Y-%m-%d %H:%M UTC')}</p>"
         "<p><a href='catalog/movie/top10-movies.json' style='color:#9cf'>movies.json</a> · "
-        "<a href='catalog/series/top10-series.json' style='color:#9cf'>series.json</a></p></body>", "utf-8")
+        "<a href='catalog/series/top10-series.json' style='color:#9cf'>series.json</a></p>"
+        f"<p style='color:#888;font-size:.9rem'>{credits}.</p></body>", "utf-8")
     print(f"done -> {DIST}  ({manifest['version']})  ranking: {source_note}")
     return 0
 

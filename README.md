@@ -33,9 +33,11 @@ why it carries the most weight. Every item's description lists its rank on each 
 
 ### Turning the sources on (both free, two minutes each)
 
-- **Trakt**: log in at trakt.tv, open https://trakt.tv/oauth/applications/new, give the app any name and the redirect
-  URI `urn:ietf:wg:oauth:2.0:oob`, save. Copy the **Client ID** → repo → Settings → Secrets and variables → Actions →
-  New repository secret `TRAKT_CLIENT_ID`.
+- **Trakt**: log in at trakt.tv, open https://trakt.tv/oauth/applications/new (a verified GitHub account is required),
+  give the app any name, keep the **Development** app type and enter `http://localhost` as the redirect URI — the
+  addon never signs anyone in, it only reads public endpoints with the Client ID, so the redirect URI is never used.
+  Save, copy the **Client ID** → repo → Settings → Secrets and variables → Actions → New repository secret
+  `TRAKT_CLIENT_ID`. (The "most watched" endpoints are public on Trakt's free Standard tier; no Premium needed.)
 - **TMDB**: themoviedb.org → Settings → API → request a (free) developer key. Copy the **API Key (v3 auth)** →
   New repository secret `TMDB_API_KEY`.
 
@@ -47,7 +49,7 @@ Optional repository **variables** (Settings → Secrets and variables → Action
 | Variable | Default | Meaning |
 |---|---|---|
 | `SOURCES` | all configured | force a subset, e.g. `trakt` for Trakt only, or `trakt,tmdb` |
-| `TRAKT_PERIOD` | `weekly` | `daily`, `weekly` or `monthly` most-watched window |
+| `TRAKT_PERIOD` | `weekly` | `daily`, `weekly`, `monthly` or `yearly` most-watched window |
 | `TOP_N` | `10` | how many ranks to publish |
 | `SITE_URL` | derived from the repo | only for a custom domain or a `<user>.github.io` root repo |
 
