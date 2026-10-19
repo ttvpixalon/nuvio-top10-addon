@@ -5,7 +5,7 @@ Builds `dist/` (manifest + two catalogs + numbered images + state). Hosted on Gi
 so the lists and artwork stay current without a server.
 
 Ranking = consensus of every source that is available (weighted Borda count), so no single site's quirks decide
-the list. Each source contributes its top 20; an item scores (21 - rank) x weight per source, totals are sorted.
+the list. Each source contributes its top 40; an item scores (41 - rank) x weight per source, totals are sorted.
 A title that only one source lists (while several answered) is halved, so one feed's glitch can't push it in.
   * Trakt    "most watched" (unique users who actually played it, weekly)   weight 1.0   needs TRAKT_CLIENT_ID
   * Trakt    "trending" (users watching it in the last 24 h)                 weight 0.6   needs TRAKT_CLIENT_ID
@@ -23,7 +23,8 @@ Environment:
   TRAKT_PERIOD      daily | weekly | monthly | yearly  (default weekly)
   TOP_N             how many ranks to publish (default 10)
   SOURCES           comma list to force a subset: trakt,trakt_trending,tmdb,cinemeta (default: all configured)
-  WIDE_STYLE        backdrop (backdrop + title logo + numeral, default) | poster (numeral + poster)
+  WIDE_STYLE        merged (numeral tucked behind the poster, default) | backdrop (backdrop + title logo)
+                    | poster (numeral beside the poster)
 """
 from __future__ import annotations
 
@@ -46,12 +47,12 @@ TRAKT_ID = os.environ.get("TRAKT_CLIENT_ID", "").strip()
 TRAKT_PERIOD = os.environ.get("TRAKT_PERIOD", "weekly").strip().lower() or "weekly"
 TOP_N = int(os.environ.get("TOP_N", "10"))
 WANTED = {s.strip().lower() for s in os.environ.get("SOURCES", "").split(",") if s.strip()}
-WIDE_STYLE = os.environ.get("WIDE_STYLE", "backdrop").strip().lower() or "backdrop"
-CANDIDATES = 20                        # ranks taken from each source before the consensus vote
+WIDE_STYLE = os.environ.get("WIDE_STYLE", "merged").strip().lower() or "merged"
+CANDIDATES = 40                        # ranks taken from each source before the consensus vote
 SOLO_PENALTY = 0.5                     # score multiplier for a title only one source lists (when >1 answered)
 HISTORY_DAYS = 30
 TODAY = dt.datetime.now(dt.timezone.utc).date()
-UA = "nuvio-top10-addon/3.0 (+https://github.com)"
+UA = "nuvio-top10-addon/3.1 (+https://github.com)"
 
 POSTER_W, POSTER_H = 600, 900          # 2:3 card
 WIDE_W, WIDE_H = 1280, 720             # 16:9 card
@@ -59,8 +60,6 @@ BG_W, BG_H = 1920, 1080                # plain backdrop (hero / expanded focus)
 NUM_FILL = (24, 24, 24)
 NUM_STROKE = (178, 178, 178)
 BADGE_NEW = (214, 32, 44)
-BADGE_UP = (26, 150, 70)
-BADGE_DOWN = (82, 82, 82)
 
 TMDB_GENRES = {
     28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 18: "Drama",
@@ -106,27 +105,32 @@ def src_cinemeta(kind: str) -> list[dict]:
 
 def src_tmdb(kind: str) -> list[dict]:
     t = "movie" if kind == "movie" else "tv"
-    data = http_json(f"https://api.themoviedb.org/3/trending/{t}/day?api_key={TMDB_KEY}&language=en-US")
-    out = []
-    for r in data.get("results", []):
-        date = (r.get("release_date") if t == "movie" else r.get("first_air_date")) or ""
-        # TMDB "trending" counts page views, so an unreleased title with a hot trailer can sit at #1 even though
-        # nobody can watch it yet. A Top 10 of what the world is watching should only hold released titles.
-        if r.get("adult") or not date or date > TODAY.isoformat():
-            continue
-        ext = http_json(f"https://api.themoviedb.org/3/{t}/{r['id']}/external_ids?api_key={TMDB_KEY}")
-        imdb = (ext.get("imdb_id") or "").strip()
-        if not imdb.startswith("tt"):
-            continue
-        out.append({
-            "id": imdb, "name": r.get("title") or r.get("name") or "", "year": (date or "")[:4],
-            "description": r.get("overview") or "",
-            "rating": f"{r['vote_average']:.1f}" if r.get("vote_average") else None,
-            "genres": [TMDB_GENRES[g] for g in r.get("genre_ids", []) if g in TMDB_GENRES],
-            "poster": f"https://image.tmdb.org/t/p/w780{r['poster_path']}" if r.get("poster_path") else None,
-            "background": f"https://image.tmdb.org/t/p/w1280{r['backdrop_path']}" if r.get("backdrop_path") else None,
-        })
-        if len(out) >= CANDIDATES:
+    out, seen = [], set()
+    for page in range(1, 6):                                   # 20 results per page
+        data = http_json(f"https://api.themoviedb.org/3/trending/{t}/day?api_key={TMDB_KEY}&language=en-US&page={page}")
+        results = data.get("results", [])
+        for r in results:
+            date = (r.get("release_date") if t == "movie" else r.get("first_air_date")) or ""
+            # TMDB "trending" counts page views, so an unreleased title with a hot trailer can sit at #1 even though
+            # nobody can watch it yet. A Top 10 of what the world is watching should only hold released titles.
+            if r.get("adult") or not date or date > TODAY.isoformat():
+                continue
+            ext = http_json(f"https://api.themoviedb.org/3/{t}/{r['id']}/external_ids?api_key={TMDB_KEY}")
+            imdb = (ext.get("imdb_id") or "").strip()
+            if not imdb.startswith("tt") or imdb in seen:
+                continue
+            seen.add(imdb)
+            out.append({
+                "id": imdb, "name": r.get("title") or r.get("name") or "", "year": (date or "")[:4],
+                "description": r.get("overview") or "",
+                "rating": f"{r['vote_average']:.1f}" if r.get("vote_average") else None,
+                "genres": [TMDB_GENRES[g] for g in r.get("genre_ids", []) if g in TMDB_GENRES],
+                "poster": f"https://image.tmdb.org/t/p/w780{r['poster_path']}" if r.get("poster_path") else None,
+                "background": f"https://image.tmdb.org/t/p/w1280{r['backdrop_path']}" if r.get("backdrop_path") else None,
+            })
+            if len(out) >= CANDIDATES:
+                return out
+        if len(results) < 20 or page >= int(data.get("total_pages") or 1):
             break
     return out
 
@@ -347,10 +351,11 @@ def font_for(text: str, max_w: int, max_h: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONT), 10)
 
 
-def draw_number(canvas: Image.Image, text: str, box: tuple[int, int, int, int], align: str) -> None:
+def draw_number(canvas: Image.Image, text: str, box: tuple[int, int, int, int], align: str,
+                font: ImageFont.FreeTypeFont | None = None) -> None:
     """Netflix-style numeral: dark fill, grey outline, soft shadow. box=(x0,y0,x1,y1); align='left'|'right'."""
     x0, y0, x1, y1 = box
-    f = font_for(text, x1 - x0, y1 - y0)
+    f = font or font_for(text, x1 - x0, y1 - y0)
     l, t, r, b = f.getbbox(text)
     th = b - t
     x = (x0 - l) if align == "left" else (x1 - r)
@@ -367,36 +372,24 @@ def draw_number(canvas: Image.Image, text: str, box: tuple[int, int, int, int], 
 
 
 def draw_badge(canvas: Image.Image, mv: dict, xy: tuple[int, int], size: int) -> None:
-    """Top-corner pill: red NEW, green ▲n or grey ▼n. Nothing when the title held its spot."""
-    if mv["new"]:
-        text, color, arrow = "NEW", BADGE_NEW, None
-    elif mv["delta"]:
-        text, color, arrow = str(abs(mv["delta"])), (BADGE_UP if mv["delta"] > 0 else BADGE_DOWN), mv["delta"] > 0
-    else:
+    """Top-corner red NEW pill for a title that was not on yesterday's list. Nothing otherwise."""
+    if not mv["new"]:
         return
+    text = "NEW"
     f = ImageFont.truetype(str(FONT), size)
     l, t, r, b = f.getbbox(text)
     tw, th = r - l, b - t
     pad_x, pad_y = round(size * 0.55), round(size * 0.38)
-    tri = round(size * 0.62) if arrow is not None else 0
-    gap = round(size * 0.3) if arrow is not None else 0
-    w, h = tw + pad_x * 2 + tri + gap, th + pad_y * 2
+    w, h = tw + pad_x * 2, th + pad_y * 2
     x, y = xy
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    d.rounded_rectangle((x + 3, y + 5, x + w + 3, y + h + 5), radius=round(h * 0.28), fill=(0, 0, 0, 120))
+    ImageDraw.Draw(layer).rounded_rectangle((x + 3, y + 5, x + w + 3, y + h + 5), radius=round(h * 0.28),
+                                            fill=(0, 0, 0, 120))
     canvas.alpha_composite(layer.filter(ImageFilter.GaussianBlur(6)))
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    d.rounded_rectangle((x, y, x + w, y + h), radius=round(h * 0.28), fill=color + (235,))
-    cx = x + pad_x
-    if arrow is not None:
-        cy = y + h / 2
-        pts = [(cx, cy + tri / 2), (cx + tri, cy + tri / 2), (cx + tri / 2, cy - tri / 2)] if arrow else \
-              [(cx, cy - tri / 2), (cx + tri, cy - tri / 2), (cx + tri / 2, cy + tri / 2)]
-        d.polygon(pts, fill=(255, 255, 255, 255))
-        cx += tri + gap
-    d.text((cx - l, y + pad_y - t), text, font=f, fill=(255, 255, 255, 255))
+    d.rounded_rectangle((x, y, x + w, y + h), radius=round(h * 0.28), fill=BADGE_NEW + (235,))
+    d.text((x + pad_x - l, y + pad_y - t), text, font=f, fill=(255, 255, 255, 255))
     canvas.alpha_composite(layer)
 
 
@@ -432,16 +425,42 @@ def render_poster_card(poster: Image.Image, rank: int, mv: dict) -> Image.Image:
     return card.convert("RGB")
 
 
+def dark_base(poster: Image.Image, backdrop: Image.Image | None, w: int, h: int) -> Image.Image:
+    """Near-black base with the title's own blurred backdrop showing through faintly, plus a poster-tinted glow."""
+    base = Image.new("RGBA", (w, h), (14, 14, 14, 255))
+    if backdrop is not None:
+        bg = cover(backdrop, w, h).filter(ImageFilter.GaussianBlur(28))
+        base.alpha_composite(Image.eval(bg, lambda v: int(v * 0.28)).convert("RGBA"))
+    tint = dominant_tint(poster)
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((w * 0.25, -h * 0.3, w * 1.1, h * 1.2), fill=tint + (60,))
+    base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(140)))
+    base.alpha_composite(gradient(w, h, "bottom", 120))
+    return base
+
+
+def paste_poster(base: Image.Image, poster: Image.Image, x: int, y: int, w: int, h: int) -> None:
+    p = cover(poster, w, h).convert("RGBA")
+    shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rectangle((x - 14, y - 6, x + w + 14, y + h + 16), fill=(0, 0, 0, 200))
+    base.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(18)))
+    base.alpha_composite(p, (x, y))
+
+
 def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Image.Image | None,
                      rank: int, mv: dict) -> Image.Image:
-    """16:9 card. backdrop style: the title's backdrop, big numeral left, title logo right (Netflix TV Top 10 tile).
-    poster style (or fallback): dark tinted base, numeral left, poster right."""
+    """16:9 card.
+    merged  (default): big numeral with its right part tucked behind the poster, the pair centred — the Netflix
+                       Top 10 row look. The title's blurred backdrop shows faintly behind.
+    backdrop         : the title's backdrop, numeral left, title logo right (needs a logo; else merged).
+    poster           : dark tinted base, numeral left, poster right, no overlap."""
+    text = str(rank)
     if WIDE_STYLE == "backdrop" and backdrop is not None and logo is not None:
         base = cover(backdrop, WIDE_W, WIDE_H).convert("RGBA")
         base.alpha_composite(Image.new("RGBA", base.size, (0, 0, 0, 60)))
         base.alpha_composite(gradient(WIDE_W, WIDE_H, "left", 235))
         base.alpha_composite(gradient(WIDE_W, WIDE_H, "bottom", 150))
-        draw_number(base, str(rank), (44, int(WIDE_H * 0.20), int(WIDE_W * 0.40), WIDE_H - 30), "left")
+        draw_number(base, text, (44, int(WIDE_H * 0.20), int(WIDE_W * 0.40), WIDE_H - 30), "left")
         max_w, max_h = int(WIDE_W * 0.46), int(WIDE_H * 0.42)
         scale = min(max_w / logo.width, max_h / logo.height)
         lg = logo.resize((max(1, round(logo.width * scale)), max(1, round(logo.height * scale))), Image.LANCZOS)
@@ -452,20 +471,33 @@ def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Im
         base.alpha_composite(lg, (lx, ly))
         draw_badge(base, mv, (40, 36), 44)
         return base.convert("RGB")
-    base = Image.new("RGBA", (WIDE_W, WIDE_H), (16, 16, 16, 255))
-    tint = dominant_tint(poster)
-    glow = Image.new("RGBA", (WIDE_W, WIDE_H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((-WIDE_W * 0.1, -WIDE_H * 0.2, WIDE_W * 1.05, WIDE_H * 1.3), fill=tint + (70,))
-    base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(160)))
-    base.alpha_composite(gradient(WIDE_W, WIDE_H, "bottom", 110))
-    poster_w = int(WIDE_H * 2 / 3)
-    px = WIDE_W - poster_w - 36
-    p = cover(poster, poster_w, WIDE_H - 36).convert("RGBA")
-    shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rectangle((px - 12, 6, px + poster_w + 12, WIDE_H), fill=(0, 0, 0, 180))
-    base.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(16)))
-    base.alpha_composite(p, (px, 18))
-    draw_number(base, str(rank), (48, int(WIDE_H * 0.14), px - 24, WIDE_H - 18), "right")
+    if WIDE_STYLE == "poster":
+        base = dark_base(poster, None, WIDE_W, WIDE_H)
+        poster_w = int(WIDE_H * 2 / 3)
+        px = WIDE_W - poster_w - 36
+        paste_poster(base, poster, px, 18, poster_w, WIDE_H - 36)
+        draw_number(base, text, (48, int(WIDE_H * 0.14), px - 24, WIDE_H - 18), "right")
+        draw_badge(base, mv, (40, 36), 44)
+        return base.convert("RGB")
+    # merged
+    base = dark_base(poster, backdrop, WIDE_W, WIDE_H)
+    pad = 26
+    ph = WIDE_H - pad * 2
+    pw = round(ph * 2 / 3)
+    f = ImageFont.truetype(str(FONT), int(WIDE_H * 1.02))        # cap height ≈ 0.72 em → numeral ≈ 73 % of the tile
+    l, t, r, b = f.getbbox(text)
+    nw = r - l
+    hide = 0.42 if len(text) == 1 else 0.26                     # share of the numeral tucked behind the poster
+    overlap = round(nw * hide)                                  # (two digits: about half of the second one)
+    while nw - overlap + pw > WIDE_W - 2 * pad:                 # "10" is wide: shrink until the pair fits
+        f = ImageFont.truetype(str(FONT), f.size - 8)
+        l, t, r, b = f.getbbox(text)
+        nw = r - l
+        overlap = round(nw * hide)
+    nh = b - t
+    gx = (WIDE_W - (nw - overlap + pw)) // 2
+    draw_number(base, text, (gx, WIDE_H - pad - 10 - nh, gx + nw, WIDE_H - pad - 10), "left", font=f)
+    paste_poster(base, poster, gx + nw - overlap, pad, pw, ph)
     draw_badge(base, mv, (40, 36), 44)
     return base.convert("RGB")
 

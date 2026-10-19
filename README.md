@@ -1,9 +1,9 @@
 # Top 10 Today — Nuvio / Stremio catalog addon
 
 Two home-page rows, **Top 10 Movies Today** and **Top 10 Series Today**, showing what the world is watching right now
-with Netflix-style ranked artwork: big outlined numerals, the title's own logo on a landscape backdrop, a red **NEW**
-badge for titles that just entered the list and ▲/▼ badges for titles that moved since yesterday. The lists and the
-images are rebuilt automatically every 6 hours by GitHub Actions and served from GitHub Pages — there is no server.
+with Netflix-style ranked artwork: big outlined numerals tucked behind the poster on landscape tiles, numerals in the
+corner of poster cards, and a red **NEW** badge for titles that just entered the list. The lists and the images are
+rebuilt automatically every 6 hours by GitHub Actions and served from GitHub Pages — there is no server.
 
 ## Install in Nuvio
 
@@ -12,13 +12,14 @@ images are rebuilt automatically every 6 hours by GitHub Actions and served from
 3. Settings → Sources → Catalog order: drag the two Top 10 rows to the top of Home.
 
 Each item ships three images and Nuvio picks the right one: a 2:3 poster with the numeral in the corner (poster
-rows), a 16:9 tile with the numeral and the title logo on the backdrop (landscape rows), and a clean 1920×1080
-backdrop for the hero / expanded-focus view. The title logo is also passed as `logo`.
+rows), a 16:9 tile with the big numeral half hidden behind the poster — the Netflix Top 10 row look — on the title's
+own blurred backdrop (landscape rows), and a clean 1920×1080 backdrop for the hero / expanded-focus view. The title
+logo is passed as `logo`.
 
 ## Where the "Top 10" comes from
 
 No single site knows what the whole world is watching, so the ranking is a **consensus** of the best public signals.
-Each source contributes its top 20; a title earns `(21 − rank) × weight` from every source it appears in, and the
+Each source contributes its top 40; a title earns `(41 − rank) × weight` from every source it appears in, and the
 totals decide the order. A title that is high on *several* lists beats one that is high on only one, and a title
 that only one source lists (while others answered) has its score halved, so one feed's glitch can't push it in.
 
@@ -34,12 +35,12 @@ Every item's description explains its placement, e.g.
 `#2 in the world today · up 3 since yesterday · 4 days in the Top 10 · 81k Trakt users watched it this week
 (Trakt most-watched (weekly) #1 · Trakt trending (24h) #4 · TMDB trending #3 · Stremio popular #6)`.
 
-### Movement, NEW badges, days on the list
+### NEW badges, movement, days on the list
 
 Every build writes its rankings to `state.json` next to the catalogs and reads the previous one back from the
-published site, so the addon remembers up to 30 days of history without a database. Movement is measured against
-the newest snapshot from a previous day ("since yesterday"); a title gets **NEW** when it was not on yesterday's
-list, and "days in the Top 10" counts how long it has stayed on without dropping off.
+published site, so the addon remembers up to 30 days of history without a database. A title gets a **NEW** badge on
+its artwork when it was not on yesterday's list; how far it moved since yesterday and how many days it has stayed on
+the list go into the description only.
 
 ### Turning the sources on (both free, two minutes each)
 
@@ -60,7 +61,7 @@ Optional repository **variables** (Settings → Secrets and variables → Action
 |---|---|---|
 | `SOURCES` | all configured | force a subset: `trakt`, `trakt_trending`, `tmdb`, `cinemeta` (comma-separated) |
 | `TRAKT_PERIOD` | `weekly` | `daily`, `weekly`, `monthly` or `yearly` most-watched window |
-| `WIDE_STYLE` | `backdrop` | landscape tile style: `backdrop` (backdrop + title logo) or `poster` (numeral + poster) |
+| `WIDE_STYLE` | `merged` | landscape tile: `merged` (numeral behind the poster), `backdrop` (backdrop + title logo) or `poster` (numeral beside the poster) |
 | `TOP_N` | `10` | how many ranks to publish |
 | `SITE_URL` | derived from the repo | only for a custom domain or a `<user>.github.io` root repo |
 
