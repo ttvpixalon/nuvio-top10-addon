@@ -13,8 +13,8 @@ A title that only one source lists (while several answered) is halved, so one fe
   * Cinemeta "popular" (Stremio's popularity feed, IMDb-based)               weight 0.7   always on, no key
 
 Movement: the previous builds' rankings live in dist/state.json on the published site. Every build reads it back,
-so each title knows whether it is NEW on the list, how far it moved since yesterday and how many days it has been
-in the Top 10 — shown as a badge on the artwork and in the description.
+so each description can say whether the title is new on the list, how far it moved since yesterday and how many
+days it has been in the Top 10. (Text only — the artwork carries just the numeral.)
 
 Environment:
   SITE_URL          public base URL of the deployed site, e.g. https://you.github.io/nuvio-top10-addon  (required)
@@ -23,6 +23,8 @@ Environment:
   TRAKT_PERIOD      daily | weekly | monthly | yearly  (default weekly)
   TOP_N             how many ranks to publish (default 10)
   SOURCES           comma list to force a subset: trakt,trakt_trending,tmdb,cinemeta (default: all configured)
+  POSTER_STYLE      merged (poster top-right, numeral bottom-left under its corner, default) | overlay (numeral on
+                    the full-bleed poster)
   WIDE_STYLE        merged (numeral tucked behind the poster, default) | backdrop (backdrop + title logo)
                     | poster (numeral beside the poster)
 """
@@ -48,18 +50,18 @@ TRAKT_PERIOD = os.environ.get("TRAKT_PERIOD", "weekly").strip().lower() or "week
 TOP_N = int(os.environ.get("TOP_N", "10"))
 WANTED = {s.strip().lower() for s in os.environ.get("SOURCES", "").split(",") if s.strip()}
 WIDE_STYLE = os.environ.get("WIDE_STYLE", "merged").strip().lower() or "merged"
+POSTER_STYLE = os.environ.get("POSTER_STYLE", "merged").strip().lower() or "merged"
 CANDIDATES = 40                        # ranks taken from each source before the consensus vote
 SOLO_PENALTY = 0.5                     # score multiplier for a title only one source lists (when >1 answered)
 HISTORY_DAYS = 30
 TODAY = dt.datetime.now(dt.timezone.utc).date()
-UA = "nuvio-top10-addon/3.1 (+https://github.com)"
+UA = "nuvio-top10-addon/3.2 (+https://github.com)"
 
 POSTER_W, POSTER_H = 600, 900          # 2:3 card
 WIDE_W, WIDE_H = 1280, 720             # 16:9 card
 BG_W, BG_H = 1920, 1080                # plain backdrop (hero / expanded focus)
 NUM_FILL = (24, 24, 24)
 NUM_STROKE = (178, 178, 178)
-BADGE_NEW = (214, 32, 44)
 
 TMDB_GENRES = {
     28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 18: "Drama",
@@ -371,28 +373,6 @@ def draw_number(canvas: Image.Image, text: str, box: tuple[int, int, int, int], 
     canvas.alpha_composite(layer)
 
 
-def draw_badge(canvas: Image.Image, mv: dict, xy: tuple[int, int], size: int) -> None:
-    """Top-corner red NEW pill for a title that was not on yesterday's list. Nothing otherwise."""
-    if not mv["new"]:
-        return
-    text = "NEW"
-    f = ImageFont.truetype(str(FONT), size)
-    l, t, r, b = f.getbbox(text)
-    tw, th = r - l, b - t
-    pad_x, pad_y = round(size * 0.55), round(size * 0.38)
-    w, h = tw + pad_x * 2, th + pad_y * 2
-    x, y = xy
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(layer).rounded_rectangle((x + 3, y + 5, x + w + 3, y + h + 5), radius=round(h * 0.28),
-                                            fill=(0, 0, 0, 120))
-    canvas.alpha_composite(layer.filter(ImageFilter.GaussianBlur(6)))
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    d.rounded_rectangle((x, y, x + w, y + h), radius=round(h * 0.28), fill=BADGE_NEW + (235,))
-    d.text((x + pad_x - l, y + pad_y - t), text, font=f, fill=(255, 255, 255, 255))
-    canvas.alpha_composite(layer)
-
-
 def gradient(w: int, h: int, direction: str, strength: int = 230) -> Image.Image:
     g = Image.new("L", (w, h), 0)
     px = g.load()
@@ -415,14 +395,37 @@ def dominant_tint(img: Image.Image) -> tuple[int, int, int]:
     return (min(255, r + 10), min(255, g_ + 10), min(255, b + 10))
 
 
-def render_poster_card(poster: Image.Image, rank: int, mv: dict) -> Image.Image:
-    """2:3 card: the poster with the rank numeral in the lower-left (Netflix mobile style)."""
-    card = cover(poster, POSTER_W, POSTER_H).convert("RGBA")
-    card.alpha_composite(gradient(POSTER_W, POSTER_H, "bottom", 200))
-    box_h = int(POSTER_H * (0.32 if rank < 10 else 0.27))
-    draw_number(card, str(rank), (26, POSTER_H - 22 - box_h, int(POSTER_W * 0.80), POSTER_H - 22), "left")
-    draw_badge(card, mv, (24, 24), 46)
-    return card.convert("RGB")
+def render_poster_card(poster: Image.Image, rank: int) -> Image.Image:
+    """2:3 card.
+    merged  (default): poster top-right, big numeral bottom-left with the poster's lower corner overlapping it —
+                       the Netflix Top 10 look, squeezed into a portrait cell. Poster-tinted glow behind.
+    overlay          : full-bleed poster with the numeral drawn over its lower-left corner."""
+    text = str(rank)
+    if POSTER_STYLE == "overlay":
+        card = cover(poster, POSTER_W, POSTER_H).convert("RGBA")
+        card.alpha_composite(gradient(POSTER_W, POSTER_H, "bottom", 200))
+        box_h = int(POSTER_H * (0.32 if rank < 10 else 0.27))
+        draw_number(card, text, (26, POSTER_H - 22 - box_h, int(POSTER_W * 0.80), POSTER_H - 22), "left")
+        return card.convert("RGB")
+    base = Image.new("RGBA", (POSTER_W, POSTER_H), (12, 12, 12, 255))
+    tint = dominant_tint(poster)
+    glow = Image.new("RGBA", (POSTER_W, POSTER_H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((0, -POSTER_H * 0.1, POSTER_W * 1.3, POSTER_H * 0.9), fill=tint + (60,))
+    base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(120)))
+    pad = 18
+    ph = round(POSTER_H * 0.74)
+    pw = round(ph * 2 / 3)
+    px, py = POSTER_W - pad - pw, pad
+    f = ImageFont.truetype(str(FONT), round(POSTER_H * 0.42 / 0.72))   # cap height ≈ 42 % of the cell
+    l, t, r, b = f.getbbox(text)
+    while pad + (r - l) > POSTER_W - pad:                                # "10" must stay inside the cell
+        f = ImageFont.truetype(str(FONT), f.size - 8)
+        l, t, r, b = f.getbbox(text)
+    nw, nh = r - l, b - t
+    bottom = POSTER_H - pad - 4
+    draw_number(base, text, (pad, bottom - nh, pad + nw, bottom), "left", font=f)
+    paste_poster(base, poster, px, py, pw, ph)
+    return base.convert("RGB")
 
 
 def dark_base(poster: Image.Image, backdrop: Image.Image | None, w: int, h: int) -> Image.Image:
@@ -448,7 +451,7 @@ def paste_poster(base: Image.Image, poster: Image.Image, x: int, y: int, w: int,
 
 
 def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Image.Image | None,
-                     rank: int, mv: dict) -> Image.Image:
+                     rank: int) -> Image.Image:
     """16:9 card.
     merged  (default): big numeral with its right part tucked behind the poster, the pair centred — the Netflix
                        Top 10 row look. The title's blurred backdrop shows faintly behind.
@@ -469,7 +472,6 @@ def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Im
         shadow.paste((0, 0, 0, 200), (lx, ly + 4, lx + lg.width, ly + 4 + lg.height), lg.split()[3])
         base.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(10)))
         base.alpha_composite(lg, (lx, ly))
-        draw_badge(base, mv, (40, 36), 44)
         return base.convert("RGB")
     if WIDE_STYLE == "poster":
         base = dark_base(poster, None, WIDE_W, WIDE_H)
@@ -477,7 +479,6 @@ def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Im
         px = WIDE_W - poster_w - 36
         paste_poster(base, poster, px, 18, poster_w, WIDE_H - 36)
         draw_number(base, text, (48, int(WIDE_H * 0.14), px - 24, WIDE_H - 18), "right")
-        draw_badge(base, mv, (40, 36), 44)
         return base.convert("RGB")
     # merged
     base = dark_base(poster, backdrop, WIDE_W, WIDE_H)
@@ -498,7 +499,6 @@ def render_wide_card(poster: Image.Image, backdrop: Image.Image | None, logo: Im
     gx = (WIDE_W - (nw - overlap + pw)) // 2
     draw_number(base, text, (gx, WIDE_H - pad - 10 - nh, gx + nw, WIDE_H - pad - 10), "left", font=f)
     paste_poster(base, poster, gx + nw - overlap, pad, pw, ph)
-    draw_badge(base, mv, (40, 36), 44)
     return base.convert("RGB")
 
 
@@ -538,9 +538,8 @@ def build_catalog(kind: str, state: dict) -> tuple[dict, list[str]]:
         card_name = f"{kind}-{rank}-{it['id']}.jpg"
         wide_name = f"{kind}-{rank}-{it['id']}-wide.jpg"
         bg_name = f"{kind}-{rank}-{it['id']}-bg.jpg"
-        render_poster_card(poster, rank, mv).save(DIST / "img" / card_name, "JPEG", quality=88, optimize=True)
-        render_wide_card(poster, backdrop, logo, rank, mv).save(DIST / "img" / wide_name, "JPEG", quality=88,
-                                                                optimize=True)
+        render_poster_card(poster, rank).save(DIST / "img" / card_name, "JPEG", quality=88, optimize=True)
+        render_wide_card(poster, backdrop, logo, rank).save(DIST / "img" / wide_name, "JPEG", quality=88, optimize=True)
         if backdrop is not None:
             cover(backdrop, BG_W, BG_H).save(DIST / "img" / bg_name, "JPEG", quality=82, optimize=True)
         window = {"daily": "today", "weekly": "this week", "monthly": "this month", "yearly": "this year"}
@@ -601,7 +600,7 @@ def main() -> int:
         "version": f"1.{now.strftime('%Y%m%d')}.{now.strftime('%H%M')}",
         "name": "Top 10 Today",
         "description": f"The {TOP_N} most-watched movies and series in the world right now, with ranked artwork, "
-                       f"NEW badges and daily movement. Ranking: {source_note}. Rebuilt automatically. {credits}.",
+                       f"daily movement in the descriptions. Ranking: {source_note}. Rebuilt automatically. {credits}.",
         "logo": f"{SITE_URL}/logo.png",
         "resources": ["catalog"],
         "types": ["movie", "series"],

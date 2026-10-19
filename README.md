@@ -1,9 +1,9 @@
 # Top 10 Today — Nuvio / Stremio catalog addon
 
 Two home-page rows, **Top 10 Movies Today** and **Top 10 Series Today**, showing what the world is watching right now
-with Netflix-style ranked artwork: big outlined numerals tucked behind the poster on landscape tiles, numerals in the
-corner of poster cards, and a red **NEW** badge for titles that just entered the list. The lists and the images are
-rebuilt automatically every 6 hours by GitHub Actions and served from GitHub Pages — there is no server.
+with Netflix-style ranked artwork: a big outlined numeral partly hidden behind the poster, like the Netflix Top 10
+grid. The lists and the images are rebuilt automatically every 6 hours by GitHub Actions and served from GitHub
+Pages — there is no server.
 
 ## Install in Nuvio
 
@@ -11,8 +11,8 @@ rebuilt automatically every 6 hours by GitHub Actions and served from GitHub Pag
 2. Nuvio → Settings → Addons → add `https://<your-github-user>.github.io/<this-repo>/manifest.json`.
 3. Settings → Sources → Catalog order: drag the two Top 10 rows to the top of Home.
 
-Each item ships three images and Nuvio picks the right one: a 2:3 poster with the numeral in the corner (poster
-rows), a 16:9 tile with the big numeral half hidden behind the poster — the Netflix Top 10 row look — on the title's
+Each item ships three images and Nuvio picks the right one: a 2:3 card with the poster top-right and the numeral
+bottom-left under its corner (poster rows), a 16:9 tile with the numeral half hidden behind the poster on the title's
 own blurred backdrop (landscape rows), and a clean 1920×1080 backdrop for the hero / expanded-focus view. The title
 logo is passed as `logo`.
 
@@ -35,12 +35,12 @@ Every item's description explains its placement, e.g.
 `#2 in the world today · up 3 since yesterday · 4 days in the Top 10 · 81k Trakt users watched it this week
 (Trakt most-watched (weekly) #1 · Trakt trending (24h) #4 · TMDB trending #3 · Stremio popular #6)`.
 
-### NEW badges, movement, days on the list
+### Movement and days on the list
 
 Every build writes its rankings to `state.json` next to the catalogs and reads the previous one back from the
-published site, so the addon remembers up to 30 days of history without a database. A title gets a **NEW** badge on
-its artwork when it was not on yesterday's list; how far it moved since yesterday and how many days it has stayed on
-the list go into the description only.
+published site, so the addon remembers up to 30 days of history without a database. Whether a title is new on the
+list, how far it moved since yesterday and how many days it has stayed on go into the description (text only; the
+artwork carries just the numeral).
 
 ### Turning the sources on (both free, two minutes each)
 
@@ -61,6 +61,7 @@ Optional repository **variables** (Settings → Secrets and variables → Action
 |---|---|---|
 | `SOURCES` | all configured | force a subset: `trakt`, `trakt_trending`, `tmdb`, `cinemeta` (comma-separated) |
 | `TRAKT_PERIOD` | `weekly` | `daily`, `weekly`, `monthly` or `yearly` most-watched window |
+| `POSTER_STYLE` | `merged` | poster card: `merged` (poster top-right, numeral under its corner) or `overlay` (numeral drawn on the full-bleed poster) |
 | `WIDE_STYLE` | `merged` | landscape tile: `merged` (numeral behind the poster), `backdrop` (backdrop + title logo) or `poster` (numeral beside the poster) |
 | `TOP_N` | `10` | how many ranks to publish |
 | `SITE_URL` | derived from the repo | only for a custom domain or a `<user>.github.io` root repo |

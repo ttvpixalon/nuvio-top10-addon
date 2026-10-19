@@ -43,6 +43,7 @@ jobs:
           TRAKT_PERIOD: ${{ vars.TRAKT_PERIOD != '' && vars.TRAKT_PERIOD || 'weekly' }}   # daily | weekly | monthly | yearly
           SOURCES: ${{ vars.SOURCES }}                      # e.g. "trakt" to use Trakt alone instead of the consensus
           TOP_N: ${{ vars.TOP_N != '' && vars.TOP_N || '10' }}
+          POSTER_STYLE: ${{ vars.POSTER_STYLE != '' && vars.POSTER_STYLE || 'merged' }}   # merged | overlay
           WIDE_STYLE: ${{ vars.WIDE_STYLE != '' && vars.WIDE_STYLE || 'merged' }}   # merged | backdrop | poster
         run: python generate.py
 
