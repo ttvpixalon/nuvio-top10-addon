@@ -341,11 +341,28 @@ def providers(kind: str, it: dict) -> list[str] | None:
         names: list[str] = []
         for bucket in ("flatrate", "free", "ads"):
             for p in region.get(bucket) or []:
-                n = p.get("provider_name")
+                n = service_name(p.get("provider_name") or "")
                 if n and n not in names:
                     names.append(n)
         _providers_cache[key] = names
     return _providers_cache[key]
+
+
+TIER_SUFFIXES = (" Amazon Channel", " Apple TV Channel", " Roku Premium Channel", " Standard with Ads",
+                 " Free with Ads", " with Ads", " Premium Plus", " Essential", " Premium", " Basic")
+
+
+def service_name(name: str) -> str:
+    """'Peacock Premium Plus' -> 'Peacock', 'Netflix Standard with Ads' -> 'Netflix', 'HBO Max Amazon Channel' -> 'HBO Max'."""
+    name = name.strip()
+    changed = True
+    while changed:
+        changed = False
+        for suf in TIER_SUFFIXES:
+            if name.endswith(suf) and len(name) > len(suf):
+                name = name[: -len(suf)].strip()
+                changed = True
+    return name
 
 
 def regional(kind: str, pool: list[dict]) -> list[dict]:
