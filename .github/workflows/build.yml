@@ -40,9 +40,10 @@ jobs:
           TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}   # Trakt "most watched" — real plays by real users
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}         # TMDB "trending today"
           # Optional repository variables
-          TRAKT_PERIOD: ${{ vars.TRAKT_PERIOD != '' && vars.TRAKT_PERIOD || 'weekly' }}   # daily | weekly | monthly
+          TRAKT_PERIOD: ${{ vars.TRAKT_PERIOD != '' && vars.TRAKT_PERIOD || 'weekly' }}   # daily | weekly | monthly | yearly
           SOURCES: ${{ vars.SOURCES }}                      # e.g. "trakt" to use Trakt alone instead of the consensus
           TOP_N: ${{ vars.TOP_N != '' && vars.TOP_N || '10' }}
+          WIDE_STYLE: ${{ vars.WIDE_STYLE != '' && vars.WIDE_STYLE || 'backdrop' }}   # backdrop | poster
         run: python generate.py
 
       - uses: actions/configure-pages@v5
