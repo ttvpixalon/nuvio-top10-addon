@@ -1,0 +1,52 @@
+name: Build & publish Top 10 addon
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"      # every 6 hours (UTC)
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet pillow
+
+      - name: Generate catalogs and artwork
+        env:
+          # Public URL the addon will be served from. Override with a repository variable named SITE_URL
+          # if you use a custom domain or a <user>.github.io root repo.
+          SITE_URL: ${{ vars.SITE_URL != '' && vars.SITE_URL || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}     # optional: switches the source to TMDB "Trending today"
+          TOP_N: ${{ vars.TOP_N != '' && vars.TOP_N || '10' }}
+        run: python generate.py
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
