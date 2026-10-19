@@ -2,7 +2,7 @@ name: Build & publish Top 10 addon
 
 on:
   schedule:
-    - cron: "23 */6 * * *"      # every 6 hours (UTC)
+    - cron: "23 */3 * * *"      # every 3 hours (UTC)
   push:
     branches: [main]
   workflow_dispatch:
@@ -43,8 +43,10 @@ jobs:
           TRAKT_PERIOD: ${{ vars.TRAKT_PERIOD != '' && vars.TRAKT_PERIOD || 'weekly' }}   # daily | weekly | monthly | yearly
           SOURCES: ${{ vars.SOURCES }}                      # e.g. "trakt" to use Trakt alone instead of the consensus
           TOP_N: ${{ vars.TOP_N != '' && vars.TOP_N || '10' }}
-          POSTER_STYLE: ${{ vars.POSTER_STYLE != '' && vars.POSTER_STYLE || 'merged' }}   # merged | overlay
-          WIDE_STYLE: ${{ vars.WIDE_STYLE != '' && vars.WIDE_STYLE || 'merged' }}   # merged | backdrop | poster
+          REGION: ${{ vars.REGION != '' && vars.REGION || 'US' }}          # country for the "Top 10 in …" rows
+          ROWS: ${{ vars.ROWS != '' && vars.ROWS || 'global,region' }}     # global | region | trending
+          POSTER_STYLE: ${{ vars.POSTER_STYLE != '' && vars.POSTER_STYLE || 'overlay' }}   # overlay | merged
+          WIDE_STYLE: ${{ vars.WIDE_STYLE != '' && vars.WIDE_STYLE || 'poster' }}   # poster | merged | backdrop
         run: python generate.py
 
       - uses: actions/configure-pages@v5

@@ -1,20 +1,24 @@
 # Top 10 Today — Nuvio / Stremio catalog addon
 
-Two home-page rows, **Top 10 Movies Today** and **Top 10 Series Today**, showing what the world is watching right now
-with Netflix-style ranked artwork: a big outlined numeral partly hidden behind the poster, like the Netflix Top 10
-grid. The lists and the images are rebuilt automatically every 6 hours by GitHub Actions and served from GitHub
-Pages — there is no server.
+Home-page rows showing what the world is watching right now, with Netflix-style ranked artwork (big outlined
+numerals on the poster). Everything is rebuilt automatically every 3 hours by GitHub Actions and served from GitHub
+Pages — there is no server to run.
+
+| Row | What it is |
+|---|---|
+| **Top 10 Movies Today** / **Top 10 Series Today** | a consensus of the strongest public "being watched" signals, worldwide |
+| **Top 10 Movies in the U.S.** / **Top 10 Series in the U.S.** | the same ranking, kept to titles you can actually stream in your country (subscription, free or ad-supported) |
+| *Trending Right Now* (optional) | Trakt's 24-hour "being watched" list, as is |
 
 ## Install in Nuvio
 
-1. Open the addon page: `https://<your-github-user>.github.io/<this-repo>/` — it shows the manifest URL and today's list.
+1. Open the addon page: `https://<your-github-user>.github.io/<this-repo>/` — it shows the manifest URL and today's lists.
 2. Nuvio → Settings → Addons → add `https://<your-github-user>.github.io/<this-repo>/manifest.json`.
-3. Settings → Sources → Catalog order: drag the two Top 10 rows to the top of Home.
+3. Settings → Sources → Catalog order: drag the rows you want to the top of Home (hide the ones you don't).
 
-Each item ships three images and Nuvio picks the right one: a 2:3 card with the poster top-right and the numeral
-bottom-left under its corner (poster rows), a 16:9 tile with the numeral half hidden behind the poster on the title's
-own blurred backdrop (landscape rows), and a clean 1920×1080 backdrop for the hero / expanded-focus view. The title
-logo is passed as `logo`.
+Each item ships three images and Nuvio picks the right one: a 2:3 poster with the numeral in the corner (poster
+rows), a 16:9 tile with the numeral beside the poster (landscape rows), and a clean 1920×1080 backdrop for the
+hero / expanded-focus view. The title logo is passed as `logo`, plus trailers, runtime, cast and director.
 
 ## Where the "Top 10" comes from
 
@@ -32,8 +36,22 @@ that only one source lists (while others answered) has its score halved, so one 
 
 Trakt carries the most weight because it is the only source that counts real viewing rather than page views.
 Every item's description explains its placement, e.g.
-`#2 in the world today · up 3 since yesterday · 4 days in the Top 10 · 81k Trakt users watched it this week
+`#2 in the world today · up 3 since yesterday · 4 days on the list · 81k Trakt users watched it this week
 (Trakt most-watched (weekly) #1 · Trakt trending (24h) #4 · TMDB trending #3 · Stremio popular #6)`.
+
+### The regional rows
+
+"Top 10 in the U.S." is **not** a different ranking — it is the same consensus, filtered to titles that are on a
+subscription, free or ad-supported service in your country according to TMDB's availability data (sourced from
+JustWatch). Rentals and purchases don't count. A theatrical-only blockbuster therefore shows in the world list but
+not in the regional one; a Netflix series shows in both. If fewer than 10 consensus titles are streamable in the
+region, the row is topped up from TMDB's most popular titles on streaming there. Each description names the
+services (`streaming on Netflix, Hulu`). Set the repository variable `REGION` to your ISO country code (default `US`).
+
+### Metadata
+
+Every title is enriched from Cinemeta's canonical IMDb record: the real IMDb rating (not a Trakt or TMDB score),
+genres, runtime, cast, director, writer and trailers — the same data Stremio's own catalogs carry.
 
 ### Movement and days on the list
 
@@ -50,7 +68,7 @@ artwork carries just the numeral).
   Save, copy the **Client ID** → repo → Settings → Secrets and variables → Actions → New repository secret
   `TRAKT_CLIENT_ID`. (The "most watched" and "trending" endpoints are public on Trakt's free Standard tier.)
 - **TMDB**: themoviedb.org → Settings → API → request a (free) developer key. Copy the **API Key (v3 auth)** →
-  New repository secret `TMDB_API_KEY`.
+  New repository secret `TMDB_API_KEY`. Also required for the regional rows.
 
 Then Actions → "Build & publish Top 10 addon" → *Run workflow*. The manifest description and the addon page say
 which sources went into the current build.
@@ -59,11 +77,13 @@ Optional repository **variables** (Settings → Secrets and variables → Action
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `REGION` | `US` | ISO country code for the "Top 10 in …" rows |
+| `ROWS` | `global,region` | which row sets to publish: `global`, `region`, `trending` (comma-separated) |
 | `SOURCES` | all configured | force a subset: `trakt`, `trakt_trending`, `tmdb`, `cinemeta` (comma-separated) |
 | `TRAKT_PERIOD` | `weekly` | `daily`, `weekly`, `monthly` or `yearly` most-watched window |
-| `POSTER_STYLE` | `merged` | poster card: `merged` (poster top-right, numeral under its corner) or `overlay` (numeral drawn on the full-bleed poster) |
-| `WIDE_STYLE` | `merged` | landscape tile: `merged` (numeral behind the poster), `backdrop` (backdrop + title logo) or `poster` (numeral beside the poster) |
-| `TOP_N` | `10` | how many ranks to publish |
+| `TOP_N` | `10` | how many ranks to publish per row |
+| `POSTER_STYLE` | `overlay` | poster card: `overlay` (numeral on the poster) or `merged` (poster top-right, numeral under its corner) |
+| `WIDE_STYLE` | `poster` | landscape tile: `poster` (numeral beside the poster), `merged` (numeral behind it) or `backdrop` (backdrop + title logo) |
 | `SITE_URL` | derived from the repo | only for a custom domain or a `<user>.github.io` root repo |
 
 ## Deploy your own copy
@@ -80,12 +100,12 @@ pip install pillow
 SITE_URL=https://you.github.io/nuvio-top10-addon TRAKT_CLIENT_ID=... TMDB_API_KEY=... python generate.py
 ```
 
-Output lands in `dist/` (manifest.json, catalog/*.json, img/*.jpg, state.json). Without the keys it builds from
-Cinemeta alone; movement is read from whatever is live at `SITE_URL`.
+Output lands in `dist/` (manifest.json, catalog/*/*.json, img/*.jpg, state.json). Without the keys it builds the
+world rows from Cinemeta alone; movement is read from whatever is live at `SITE_URL`.
 
 ## Files
 
-- `generate.py` — fetches the lists, merges them, tracks movement, renders the artwork, writes `dist/`
+- `generate.py` — fetches the lists, merges them, filters by region, enriches, tracks movement, renders the artwork
 - `fonts/ArchivoBlack-Regular.ttf` — numeral font (SIL Open Font License, from Google Fonts)
 - `.github/workflows/build.yml` — scheduled build + Pages deployment
 
