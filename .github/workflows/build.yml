@@ -36,7 +36,12 @@ jobs:
           # Public URL the addon will be served from. Override with a repository variable named SITE_URL
           # if you use a custom domain or a <user>.github.io root repo.
           SITE_URL: ${{ vars.SITE_URL != '' && vars.SITE_URL || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
-          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}     # optional: switches the source to TMDB "Trending today"
+          # Ranking sources (repository secrets). Each one that is set joins the consensus; Cinemeta is always on.
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}   # Trakt "most watched" — real plays by real users
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}         # TMDB "trending today"
+          # Optional repository variables
+          TRAKT_PERIOD: ${{ vars.TRAKT_PERIOD != '' && vars.TRAKT_PERIOD || 'weekly' }}   # daily | weekly | monthly
+          SOURCES: ${{ vars.SOURCES }}                      # e.g. "trakt" to use Trakt alone instead of the consensus
           TOP_N: ${{ vars.TOP_N != '' && vars.TOP_N || '10' }}
         run: python generate.py
 
