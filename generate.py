@@ -239,7 +239,8 @@ def src_trakt_trending(kind: str) -> list[dict]:
 _wiki_lock = threading.Lock()
 _wiki_last = [0.0]
 _wiki_failures = [0]
-WIKI_MAX_FAILURES = 6       # circuit breaker: after this many failed calls in one build, stop asking (cached data still counts)
+WIKI_MAX_FAILURES = 15      # circuit breaker: after this many failed calls in one build, stop asking (cached data still counts)
+WIKI_PACE = 0.15            # seconds between Wikimedia REST calls (shared runner IPs get throttled when hammered)
 
 
 class WikiThrottled(Exception):
@@ -262,7 +263,8 @@ def wiki_get(url: str, min_interval: float = 0.0, tries: int = 3):
             return http_json(url, {"User-Agent": WIKI_UA, "Accept": "application/json"})
         except urllib.error.HTTPError as e:
             if e.code == 429 and attempt < tries - 1:
-                time.sleep(min(max(float(e.headers.get("Retry-After") or 0), 2.0) + attempt, 15.0))
+                with _wiki_lock:                                  # cool everyone down, not just this call
+                    _wiki_last[0] = time.monotonic() + min(max(float(e.headers.get("Retry-After") or 0), 3.0), 20.0)
                 continue
             if e.code in (429, 403, 503):
                 _wiki_failures[0] += 1
@@ -315,7 +317,7 @@ def wiki_views(imdb: str) -> int:
             url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/"
                    f"{art}/daily/{start.strftime('%Y%m%d')}/{attempt_end.strftime('%Y%m%d')}")
             try:
-                data = wiki_get(url)
+                data = wiki_get(url, min_interval=WIKI_PACE)
                 total += sum(int(i.get("views") or 0) for i in data.get("items") or [])
                 break
             except WikiThrottled:
@@ -337,7 +339,7 @@ def rank_by_wikipedia(candidates: list[dict]) -> list[dict]:
     Hundreds of millions of readers across languages — the widest free audience signal there is."""
     for c in candidates:                                   # article lookups: sequential + paced (Wikidata limits)
         wiki_articles(c["id"])
-    with ThreadPoolExecutor(max_workers=4) as ex:          # page views: the REST API is happy with a few at a time
+    with ThreadPoolExecutor(max_workers=2) as ex:          # page views: gently — the pacing lock serialises the calls
         views = dict(zip([c["id"] for c in candidates], ex.map(lambda c: wiki_views(c["id"]), candidates)))
     if _wiki_failures[0] >= WIKI_MAX_FAILURES:
         print("  ! Wikimedia throttled this build — using cached page views where available", file=sys.stderr)
