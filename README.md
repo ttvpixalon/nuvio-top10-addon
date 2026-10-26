@@ -30,11 +30,16 @@ that only one source lists (while others answered) has its score halved, so one 
 | Source | Measures | Weight | Needs |
 |---|---|---|---|
 | **Trakt — Most watched** (weekly) | unique users who actually played the title this week, worldwide | 1.0 | `TRAKT_CLIENT_ID` secret |
+| **Wikipedia — readers this week** | page views over the last 7 days, summed across 14 language editions (English, Spanish, Portuguese, French, German, Italian, Japanese, Hindi, Indonesian, Turkish, Korean, Russian, Arabic, Chinese); the widest free audience signal there is. It re-ranks the titles the other sources surfaced | 0.9 | nothing — public Wikimedia APIs |
 | **Trakt — Trending** | users watching the title in the last 24 hours | 0.6 | `TRAKT_CLIENT_ID` secret |
 | **TMDB — Trending today** | worldwide activity on TMDB in the last 24 h; unreleased titles are skipped | 0.8 | `TMDB_API_KEY` secret |
 | **Cinemeta — Popular** | Stremio's own popularity feed (IMDb-based) | 0.7 | nothing — always on |
 
-Trakt carries the most weight because it is the only source that counts real viewing rather than page views.
+Trakt carries the most weight because it is the only source that counts real viewing rather than page views;
+Wikipedia comes next because its audience is the closest thing to "the world" that is publicly measurable.
+Articles are found through Wikidata (IMDb id → article per language) once per title and cached in `state.json`;
+page views are fetched once per day. If Wikimedia throttles a build, the addon stops asking and keeps the
+previous day's numbers rather than failing.
 Every item's description explains its placement, e.g.
 `#2 in the world today · up 3 since yesterday · 4 days on the list · 81k Trakt users watched it this week
 (Trakt most-watched (weekly) #1 · Trakt trending (24h) #4 · TMDB trending #3 · Stremio popular #6)`.
@@ -79,7 +84,7 @@ Optional repository **variables** (Settings → Secrets and variables → Action
 |---|---|---|
 | `REGION` | `US` | ISO country code for the "Top 10 in …" rows |
 | `ROWS` | `global,region` | which row sets to publish: `global`, `region`, `trending` (comma-separated) |
-| `SOURCES` | all configured | force a subset: `trakt`, `trakt_trending`, `tmdb`, `cinemeta` (comma-separated) |
+| `SOURCES` | all configured | force a subset: `trakt`, `wikipedia`, `trakt_trending`, `tmdb`, `cinemeta` (comma-separated) |
 | `TRAKT_PERIOD` | `weekly` | `daily`, `weekly`, `monthly` or `yearly` most-watched window |
 | `TOP_N` | `10` | how many ranks to publish per row |
 | `POSTER_STYLE` | `overlay` | poster card: `overlay` (numeral on the poster) or `merged` (poster top-right, numeral under its corner) |

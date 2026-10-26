@@ -9,6 +9,8 @@ Rows (ROWS env, default "global,region"):
             Each source contributes its top 40; an item scores (41 - rank) x weight per source, totals are sorted.
             A title that only one source lists (while several answered) is halved, so one feed's glitch can't push it in.
               * Trakt    "most watched" (unique users who actually played it, weekly)   weight 1.0  TRAKT_CLIENT_ID
+              * Wikipedia page views over the last 7 days, summed across 14 language editions — the widest free
+                         audience signal there is; it re-ranks the other sources' candidates      weight 0.9  no key
               * Trakt    "trending" (users watching it in the last 24 h)                 weight 0.6  TRAKT_CLIENT_ID
               * TMDB     "trending today" (worldwide TMDB activity, released titles only) weight 0.8 TMDB_API_KEY
               * Cinemeta "popular" (Stremio's popularity feed, IMDb-based)               weight 0.7  always on
@@ -30,7 +32,7 @@ Environment:
   ROWS              comma list of row sets to publish: global, region, trending (default global,region)
   TRAKT_PERIOD      daily | weekly | monthly | yearly  (default weekly)
   TOP_N             how many ranks to publish (default 10)
-  SOURCES           comma list to force a subset: trakt,trakt_trending,tmdb,cinemeta (default: all configured)
+  SOURCES           comma list to force a subset: trakt,wikipedia,trakt_trending,tmdb,cinemeta (default: all)
   POSTER_STYLE      overlay (numeral on the full-bleed poster, default) | merged (poster top-right, numeral under it)
   WIDE_STYLE        poster (numeral beside the poster, default) | merged | backdrop (backdrop + title logo)
 """
@@ -41,8 +43,12 @@ import io
 import json
 import os
 import sys
+import threading
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
@@ -61,10 +67,14 @@ WANTED = {s.strip().lower() for s in os.environ.get("SOURCES", "").split(",") if
 POSTER_STYLE = os.environ.get("POSTER_STYLE", "overlay").strip().lower() or "overlay"
 WIDE_STYLE = os.environ.get("WIDE_STYLE", "poster").strip().lower() or "poster"
 CANDIDATES = 40                        # ranks taken from each source before the consensus vote
+WIKI_LANGS = ("en", "es", "pt", "fr", "de", "it", "ja", "hi", "id", "tr", "ko", "ru", "ar", "zh")   # editions summed
+WIKI_DAYS = 7
+WIKI_UA = "nuvio-top10-addon/4.1 (https://github.com/ttvpixalon/nuvio-top10-addon)"   # Wikimedia asks for a contact
+STATE: dict = {"history": {}, "first_seen": {}, "wiki": {}, "views": {}}
 SOLO_PENALTY = 0.5                     # score multiplier for a title only one source lists (when >1 answered)
 HISTORY_DAYS = 30
 TODAY = dt.datetime.now(dt.timezone.utc).date()
-UA = "nuvio-top10-addon/4.0 (+https://github.com)"
+UA = "nuvio-top10-addon/4.1 (+https://github.com)"
 TMDB = "https://api.themoviedb.org/3"
 CINEMETA = "https://v3-cinemeta.strem.io"
 
@@ -226,8 +236,119 @@ def src_trakt_trending(kind: str) -> list[dict]:
     return _trakt_items(kind, _trakt_rows(f"{t}/trending"), "watchers")
 
 
-SOURCES = [  # (key, label, fetcher, weight, configured?)
+_wiki_lock = threading.Lock()
+_wiki_last = [0.0]
+_wiki_failures = [0]
+WIKI_MAX_FAILURES = 6       # circuit breaker: after this many failed calls in one build, stop asking (cached data still counts)
+
+
+class WikiThrottled(Exception):
+    pass
+
+
+def wiki_get(url: str, min_interval: float = 0.0, tries: int = 3):
+    """Polite Wikimedia GET: descriptive User-Agent, global pacing, honours Retry-After on 429, gives up for the
+    rest of the build once Wikimedia keeps refusing (so a throttled day can never stall the Top 10)."""
+    if _wiki_failures[0] >= WIKI_MAX_FAILURES:
+        raise WikiThrottled("wikimedia throttled this build")
+    for attempt in range(tries):
+        if min_interval:
+            with _wiki_lock:
+                wait = _wiki_last[0] + min_interval - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
+                _wiki_last[0] = time.monotonic()
+        try:
+            return http_json(url, {"User-Agent": WIKI_UA, "Accept": "application/json"})
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < tries - 1:
+                time.sleep(min(max(float(e.headers.get("Retry-After") or 0), 2.0) + attempt, 15.0))
+                continue
+            if e.code in (429, 403, 503):
+                _wiki_failures[0] += 1
+            raise
+
+
+def wiki_articles(imdb: str) -> dict[str, str]:
+    """IMDb id -> {lang: Wikipedia article title} via Wikidata (P345), cached in state.json for good.
+    Wikidata's API is strict about request rates, so lookups are sequential and paced; they only happen once per
+    title, after which the mapping lives in the cache."""
+    cache = STATE.setdefault("wiki", {})
+    hit = cache.get(imdb)
+    if hit is not None and (hit.get("t") or TODAY.isoformat() <= (hit.get("d") or "")):
+        return hit.get("t") or {}
+    titles: dict[str, str] = {}
+    try:
+        q = urllib.parse.quote(f"haswbstatement:P345={imdb}")
+        found = wiki_get(f"https://www.wikidata.org/w/api.php?action=query&list=search&srsearch={q}"
+                         f"&srnamespace=0&srlimit=1&format=json", min_interval=0.7)
+        hits = (found.get("query") or {}).get("search") or []
+        if hits:
+            qid = hits[0]["title"]
+            sites = "|".join(f"{lang}wiki" for lang in WIKI_LANGS)
+            ent = wiki_get(f"https://www.wikidata.org/w/api.php?action=wbgetentities&ids={qid}&props=sitelinks"
+                           f"&sitefilter={urllib.parse.quote(sites)}&format=json", min_interval=0.7)
+            links = ((ent.get("entities") or {}).get(qid) or {}).get("sitelinks") or {}
+            titles = {site[:-4]: v["title"] for site, v in links.items() if site.endswith("wiki") and v.get("title")}
+    except WikiThrottled:
+        return {}
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! wikidata {imdb}: {e}", file=sys.stderr)
+        return {}                                           # not cached: tried again next build
+    cache[imdb] = {"t": titles, "d": TODAY.isoformat()}   # an empty (but successful) answer is retried another day
+    return titles
+
+
+def wiki_views(imdb: str) -> int:
+    """Page views over the last WIKI_DAYS full days, summed across the editions in WIKI_LANGS (cached per day)."""
+    cache = STATE.setdefault("views", {})
+    hit = cache.get(imdb)
+    if hit and hit.get("d") == TODAY.isoformat():
+        return int(hit.get("v") or 0)
+    titles = wiki_articles(imdb)
+    total = 0
+    end = TODAY - dt.timedelta(days=1)
+    start = end - dt.timedelta(days=WIKI_DAYS - 1)
+    for lang, title in titles.items():
+        art = urllib.parse.quote(title.replace(" ", "_"), safe="")
+        for attempt_end in (end, end - dt.timedelta(days=1)):          # yesterday may not be published yet
+            url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/"
+                   f"{art}/daily/{start.strftime('%Y%m%d')}/{attempt_end.strftime('%Y%m%d')}")
+            try:
+                data = wiki_get(url)
+                total += sum(int(i.get("views") or 0) for i in data.get("items") or [])
+                break
+            except WikiThrottled:
+                return int((cache.get(imdb) or {}).get("v") or 0)     # keep yesterday's number if we have one
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    continue
+                print(f"  ! pageviews {lang} {title}: HTTP {e.code}", file=sys.stderr)
+                break
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! pageviews {lang} {title}: {e}", file=sys.stderr)
+                break
+    cache[imdb] = {"d": TODAY.isoformat(), "v": total}
+    return total
+
+
+def rank_by_wikipedia(candidates: list[dict]) -> list[dict]:
+    """Re-rank the other sources' candidates by how many people read about them on Wikipedia this week.
+    Hundreds of millions of readers across languages — the widest free audience signal there is."""
+    for c in candidates:                                   # article lookups: sequential + paced (Wikidata limits)
+        wiki_articles(c["id"])
+    with ThreadPoolExecutor(max_workers=4) as ex:          # page views: the REST API is happy with a few at a time
+        views = dict(zip([c["id"] for c in candidates], ex.map(lambda c: wiki_views(c["id"]), candidates)))
+    if _wiki_failures[0] >= WIKI_MAX_FAILURES:
+        print("  ! Wikimedia throttled this build — using cached page views where available", file=sys.stderr)
+    ranked = [dict(c, views=views[c["id"]]) for c in candidates if views.get(c["id"], 0) > 0]
+    ranked.sort(key=lambda c: -c["views"])
+    return ranked[:CANDIDATES]
+
+
+SOURCES = [  # (key, label, fetcher, weight, configured?)   — "wikipedia" re-ranks the others' candidates, see consensus()
     ("trakt", f"Trakt most-watched ({TRAKT_PERIOD})", src_trakt, 1.0, bool(TRAKT_ID)),
+    ("wikipedia", f"Wikipedia readers ({WIKI_DAYS}d)", None, 0.9, True),
     ("trakt_trending", "Trakt trending (24h)", src_trakt_trending, 0.6, bool(TRAKT_ID)),
     ("tmdb", "TMDB trending", src_tmdb, 0.8, bool(TMDB_KEY)),
     ("cinemeta", "Stremio popular", src_cinemeta, 0.7, True),
@@ -246,7 +367,8 @@ def consensus(kind: str) -> tuple[list[dict], list[str]]:
     """Weighted Borda-count merge of all available sources. Returns (ranked items, labels of sources that answered)."""
     tallies: dict[str, dict] = {}
     used: list[str] = []
-    for key, label, _fetch, weight, configured in SOURCES:
+    order = [src for src in SOURCES if src[0] != "wikipedia"] + [src for src in SOURCES if src[0] == "wikipedia"]
+    for key, label, _fetch, weight, configured in order:
         if WANTED and key not in WANTED:
             continue
         if not configured:
@@ -254,7 +376,13 @@ def consensus(kind: str) -> tuple[list[dict], list[str]]:
                 print(f"  ! {label} requested via SOURCES but its key is not set", file=sys.stderr)
             continue
         try:
-            ranked = fetch_source(key, kind)
+            if key == "wikipedia":
+                if not tallies:
+                    continue
+                ranked = rank_by_wikipedia([dict(t["meta"], id=i) for i, t in tallies.items()])
+                _source_cache[(key, kind)] = ranked
+            else:
+                ranked = fetch_source(key, kind)
         except Exception as e:  # noqa: BLE001
             print(f"  ! {label} unavailable: {e}", file=sys.stderr)
             continue
@@ -268,6 +396,9 @@ def consensus(kind: str) -> tuple[list[dict], list[str]]:
             t["ranks"][label] = pos
             if key == "trakt" and it.get("watchers"):
                 t["meta"]["watchers"] = it["watchers"]
+            if key == "wikipedia":
+                t["meta"]["views"] = it["views"]
+                continue
             for field, val in it.items():                 # first non-empty value wins, sources in priority order
                 if field != "watchers" and val not in (None, "", []) and not t["meta"].get(field):
                     t["meta"][field] = val
@@ -698,8 +829,12 @@ def blurb_for(row: str, rank: int, it: dict, mv: dict) -> str:
     window = {"daily": "today", "weekly": "this week", "monthly": "this month", "yearly": "this year"}
     if row == "global":
         head = f"#{rank} in the world today"
-        watched = f"{fmt_count(it['watchers'])} Trakt users watched it {window[TRAKT_PERIOD]}" \
-            if it.get("watchers") and TRAKT_PERIOD in window else ""
+        bits = []
+        if it.get("watchers") and TRAKT_PERIOD in window:
+            bits.append(f"{fmt_count(it['watchers'])} Trakt users watched it {window[TRAKT_PERIOD]}")
+        if it.get("views"):
+            bits.append(f"{fmt_count(it['views'])} Wikipedia readers this week")
+        watched = " · ".join(bits)
     elif row == "region":
         head = f"#{rank} on streaming in {REGION_NAME} today"
         watched = "streaming on " + ", ".join(it.get("providers", [])[:4]) if it.get("providers") else ""
@@ -772,6 +907,8 @@ def main() -> int:
         old.unlink()
 
     state = load_state()
+    STATE.clear(); STATE.update(state); STATE.setdefault("wiki", {}); STATE.setdefault("views", {})
+    state = STATE
     catalogs, used_all, page_rows = [], set(), []
     rg = REGION.lower()
     for kind, plural in (("movie", "Movies"), ("series", "Series")):
@@ -812,13 +949,20 @@ def main() -> int:
         return 1
     order = {"top10-movies": 0, "top10-series": 1}                       # global rows first, then region, trending
     catalogs.sort(key=lambda c: (order.get(c["id"], 2 if "-" + rg in c["id"] else 3), c["type"] != "movie"))
-    (DIST / "state.json").write_text(json.dumps(state, indent=0), "utf-8")
+    for imdb in [k for k, v in state.get("views", {}).items() if (v.get("d") or "") < (TODAY - dt.timedelta(days=2)).isoformat()]:
+        del state["views"][imdb]
+    stale = (TODAY - dt.timedelta(days=90)).isoformat()
+    for imdb in [k for k, v in state.get("wiki", {}).items() if (v.get("d") or "") < stale]:
+        del state["wiki"][imdb]
+    (DIST / "state.json").write_text(json.dumps(state, separators=(",", ":")), "utf-8")
 
     used = sorted(used_all)
     source_note = "consensus of " + " + ".join(used) if len(used) > 1 else (used[0] if used else "none")
     credits = " · ".join(c for c, on in (("Data from Trakt (trakt.tv)", any("Trakt" in u for u in used)),
                                          ("This product uses the TMDB API but is not endorsed or certified by TMDB",
                                           bool(TMDB_KEY)),
+                                         ("Page views via the Wikimedia REST API, articles via Wikidata",
+                                          any("Wikipedia" in u for u in used)),
                                          ("Metadata and artwork via Cinemeta / metahub (Stremio)", True)) if on)
     render_logo().save(DIST / "logo.png", "PNG")
     now = dt.datetime.now(dt.timezone.utc)
