@@ -305,10 +305,10 @@ def wiki_views(imdb: str) -> int:
     """Page views over the last WIKI_DAYS full days, summed across the editions in WIKI_LANGS (cached per day)."""
     cache = STATE.setdefault("views", {})
     hit = cache.get(imdb)
-    if hit and hit.get("d") == TODAY.isoformat():
-        return int(hit.get("v") or 0)
+    if hit and hit.get("d") == TODAY.isoformat() and int(hit.get("v") or 0) > 0:   # a zero is re-checked
+        return int(hit["v"])
     titles = wiki_articles(imdb)
-    total = 0
+    total, failed = 0, False
     end = TODAY - dt.timedelta(days=1)
     start = end - dt.timedelta(days=WIKI_DAYS - 1)
     for lang, title in titles.items():
@@ -326,11 +326,14 @@ def wiki_views(imdb: str) -> int:
                 if e.code == 404:
                     continue
                 print(f"  ! pageviews {lang} {title}: HTTP {e.code}", file=sys.stderr)
+                failed = True
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"  ! pageviews {lang} {title}: {e}", file=sys.stderr)
+                failed = True
                 break
-    cache[imdb] = {"d": TODAY.isoformat(), "v": total}
+    if not failed:                                        # a partial count is used today but never remembered
+        cache[imdb] = {"d": TODAY.isoformat(), "v": total}
     return total
 
 
